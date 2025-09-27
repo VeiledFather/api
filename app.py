@@ -6,37 +6,37 @@ from flask import Flask, request, jsonify, make_response
 
 # --- CONFIG ---
 BACKEND_URL = os.getenv("BACKEND_URL", "https://yDark.stormx.pw/index.cpp")
-BACKEND_KEY = os.getenv("BACKEND_KEY", "dark")  # Hidden backend key
+BACKEND_KEY = os.getenv("BACKEND_KEY", "dark")
 FRONTEND_KEY = os.getenv("FRONTEND_KEY", "VeiledAssembly")
 OWNER_HANDLE = os.getenv("OWNER_HANDLE", "@alphadgaf")
 CONTACT_INFO = os.getenv("CONTACT_INFO", "@alphadgaf")
-PORT = int(os.getenv("PORT", "5000"))
-BACKEND_TIMEOUT = int(os.getenv("BACKEND_TIMEOUT", "300"))
+PORT = int(os.getenv("PORT", 5000))
+BACKEND_TIMEOUT = int(os.getenv("BACKEND_TIMEOUT", 300))
 
-# --- Flask app + logging ---
+# --- Flask app ---
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("frontend-proxy")
 
-# --- Landing page ---
+# --- Landing / ownership page ---
 @app.route("/", strict_slashes=False)
 def root():
     return f"This API is owned by {OWNER_HANDLE}. Contact {CONTACT_INFO} on Telegram for membership or access.", 200
 
-# --- Frontend API mimicking backend API ---
+# --- Frontend API endpoint mimicking backend ---
 @app.route("/index.cpp", strict_slashes=False)
 def index():
     key = request.args.get("key", "").strip()
-    
-    # Check frontend key
+
+    # Ownership check
     if key != FRONTEND_KEY:
         return f"This API is owned by {OWNER_HANDLE}. Contact {CONTACT_INFO} on Telegram for membership or access.", 401
 
-    # Collect all other query parameters and forward them
+    # Collect all query parameters except 'key'
     params = {k: v for k, v in request.args.items() if k != "key"}
 
+    # No parameters? Show ownership message
     if not params:
-        # No query parameters given
         return f"This API is owned by {OWNER_HANDLE}. Contact {CONTACT_INFO} on Telegram for membership or access.", 200
 
     # Build backend URL
@@ -54,7 +54,7 @@ def index():
         log.warning("Backend request failed for %s: %s", params, e)
         return jsonify({"error": "backend request failed"}), 502
 
-    # Return JSON if possible
+    # Return JSON if backend returned JSON
     content_type = resp.headers.get("Content-Type", "")
     if "application/json" in content_type:
         try:
