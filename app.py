@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import os, time, logging
-from urllib.parse import quote_plus
+import os
+import logging
 import requests
 from flask import Flask, request, jsonify, make_response
 
@@ -18,63 +18,61 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("frontend-proxy")
 
-# --- Landing / ownership page ---
-@app.route("/", strict_slashes=False)
-def root():
+# --- Ownership / landing page ---
+def ownership_message():
     return f"This API is owned by {OWNER_HANDLE}. Contact {CONTACT_INFO} on Telegram for membership or access.", 200
 
-# --- Frontend API endpoint mimicking backend ---
+@app.route("/", strict_slashes=False)
+def root():
+    return ownership_message()
+
+# --- Frontend API endpoint ---
 @app.route("/index.cpp", strict_slashes=False)
 def index():
-    key = request.args.get("key", "").strip()
+    args = request.args.to_dict(flat=True)  # get all query parameters
+    key = args.pop("key", "").strip()
 
     # Ownership check
     if key != FRONTEND_KEY:
-        return f"This API is owned by {OWNER_HANDLE}. Contact {CONTACT_INFO} on Telegram for membership or access.", 401
+        log.warning("Invalid frontend key from %s: %s", request.remote_addr, key)
+        return ownership_message(), 401
 
-    # Collect all query parameters except 'key'
-    params = {k: v for k, v in request.args.items() if k != "key"}
+    # No other parameters? Show ownership
+    if not args:
+        return ownership_message(), 200
 
-    # No parameters? Show ownership message
-    if not params:
-        return f"This API is owned by {OWNER_HANDLE}. Contact {CONTACT_INFO} on Telegram for membership or access.", 200
+    # Build backend URL with backend key and forwarded parameters
+    backend_params = "&".join(f"{k}={requests.utils.quote(v)}" for k, v in args.items())
+    backend_url = f"{BACKEND_URL}?key={BACKEND_KEY}&{backend_params}"
 
-    # Build backend URL
-    backend_params = "&".join(f"{k}={quote_plus(v)}" for k, v in params.items())
-    backend_url = f"{BACKEND_URL}?key={quote_plus(BACKEND_KEY)}&{backend_params}"
-
-    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    log.info("Request from %s forwarded to backend: %s", client_ip, backend_url)
+    log.info("Forwarding request from %s to backend: %s", request.remote_addr, backend_url)
 
     try:
-        t0 = time.perf_counter()
         resp = requests.get(backend_url, timeout=BACKEND_TIMEOUT, headers={"User-Agent": "frontend-proxy/1.0"})
-        elapsed = time.perf_counter() - t0
-    except requests.exceptions.RequestException as e:
-        log.warning("Backend request failed for %s: %s", params, e)
-        return jsonify({"error": "backend request failed"}), 502
-
-    # Return JSON if backend returned JSON
-    content_type = resp.headers.get("Content-Type", "")
-    if "application/json" in content_type:
-        try:
-            data = resp.json()
-        except Exception:
+        content_type = resp.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            try:
+                data = resp.json()
+            except:
+                data = resp.text
+        else:
             data = resp.text
-    else:
-        data = resp.text
 
-    out = {"backend_status": resp.status_code, "data": data}
-    r = make_response(jsonify(out), 200 if resp.status_code == 200 else 502)
-    r.headers["X-Proxy-Time"] = f"{elapsed:.3f}"
-    r.headers["X-Proxy-Backend-Status"] = str(resp.status_code)
-    return r
+        out = {"backend_status": resp.status_code, "data": data}
+        r = make_response(jsonify(out), 200 if resp.status_code == 200 else 502)
+        r.headers["X-Proxy-Backend-Status"] = str(resp.status_code)
+        return r
+
+    except requests.exceptions.RequestException as e:
+        log.error("Backend request failed: %s", e)
+        return jsonify({"error": "backend request failed"}), 502
 
 # --- Health check ---
 @app.route("/health", strict_slashes=False)
 def health():
-    return {"status": "ok", "ts": int(time.time())}
+    return {"status": "ok"}
 
 # --- Run ---
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
+
